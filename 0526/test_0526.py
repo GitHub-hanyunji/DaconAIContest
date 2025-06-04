@@ -158,49 +158,6 @@ test_transform = A.Compose([
     A.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
     ToTensorV2()
 ])
-# 공통 처리 부분
-common = [
-    PadSquare(value=(0, 0, 0)),
-    A.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
-    ToTensorV2()
-]
-
-tta_transforms = [
-
-    # 1. 기본 transform (baseline)
-    A.Compose([
-        A.Resize(CFG['IMG_SIZE'], CFG['IMG_SIZE']),
-        *common
-    ]),
-
-    # 2. 수평 뒤집기 (train과 일치)
-    A.Compose([
-        A.Resize(CFG['IMG_SIZE'], CFG['IMG_SIZE']),
-        A.HorizontalFlip(p=1.0),
-        *common
-    ]),
-
-    # 3. 밝기/대비 조정 (훈련과 일치, 약하게)
-    A.Compose([
-        A.Resize(CFG['IMG_SIZE'], CFG['IMG_SIZE']),
-        A.RandomBrightnessContrast(brightness_limit=0.1, contrast_limit=0.1, p=1.0),
-        *common
-    ]),
-
-    # 4. ColorJitter (훈련 OneOf 조합 중 하나와 일치)
-    A.Compose([
-        A.Resize(CFG['IMG_SIZE'], CFG['IMG_SIZE']),
-        A.ColorJitter(0.1, 0.1, 0.1, 0.1, p=1.0),
-        *common
-    ]),
-
-    # 5. 확대 후 중심 자르기 (스케일 다양성 대응)
-    A.Compose([
-        A.Resize(int(CFG['IMG_SIZE'] * 1.05), int(CFG['IMG_SIZE'] * 1.05)),
-        A.CenterCrop(CFG['IMG_SIZE'], CFG['IMG_SIZE']),
-        *common
-    ])
-]
 
 
 train_dataset = CustomDataset(train_df['img_path'].values, train_df['rock_type'].values, train_transform2)
@@ -351,17 +308,6 @@ def validation(model, criterion, val_loader, device):
     
     return _val_loss, _val_score,class_accuracy
 
-# # 임계값 측정
-# def find_best_threshold(model, val_loader, device, criterion):
-#     best_score, best_th = 0, 0.5
-#     for th in np.arange(0.2, 0.8, 0.05):
-#         _, score, _ = validation(model, criterion, val_loader, device, threshold=th)
-#         if score > best_score:
-#             best_score = score
-#             best_th = th
-#     print(f"Best threshold: {best_th:.2f} with F1 score: {best_score:.4f}")
-#     return best_th
-
 # 그래프 그리기 
 def plot(rec_loss,rec_acc,epoch,stage):
     to_numpy_loss = np.array(rec_loss)
@@ -408,37 +354,6 @@ def inference(model, test_loader, device):
     
     preds = le.inverse_transform(preds)
     return preds
-
-def inference_tta(model, test_dataset, tta_transforms, device):
-    model = model.to(device)
-    model.eval()
-    preds = []
-
-    with torch.no_grad():
-        for i in tqdm(range(len(test_dataset))):
-            # 이미지 경로 직접 로딩
-            img_path = test_dataset.img_path_list[i]
-            img = cv2.imread(img_path)
-            img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-
-            probs_list = []
-
-            # TTA 변환들 반복 적용
-            for tta in tta_transforms:
-                augmented = tta(image=img)['image'].unsqueeze(0).to(device)  # shape: (1, C, H, W)
-                output = model(augmented)  # logits
-                probs = F.softmax(output, dim=1)  # 확률화
-                probs_list.append(probs)
-
-            # 평균 확률 계산
-            avg_probs = torch.stack(probs_list).mean(dim=0)  # shape: (1, num_classes)
-            pred_label = avg_probs.argmax(dim=1).item()  # 예측 클래스 인덱스
-            preds.append(pred_label)
-
-    # 라벨 디코딩 (숫자 → 문자열)
-    preds = le.inverse_transform(preds)
-    return preds
-
 
 
 test = pd.read_csv('./test.csv')
